@@ -21,13 +21,15 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// Response interceptor for centralized error logging
+// Response interceptor for centralized error logging and session sync
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
-      // Clear invalid token if unauthenticated
+    // Only clear token & sync session if 401 occurs on protected endpoints (not login/register attempts)
+    const isAuthEndpoint = error.config?.url?.includes('/auth/login') || error.config?.url?.includes('/auth/register');
+    if (error.response?.status === 401 && !isAuthEndpoint) {
       localStorage.removeItem('promptflow_token');
+      window.dispatchEvent(new CustomEvent('promptflow:unauthorized'));
     }
     return Promise.reject(error);
   }
