@@ -1,39 +1,52 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { projectService } from '../services/project.service';
 import { generationService } from '../services/generation.service';
-import { Sparkles, Upload, Image as ImageIcon, Video, FileText, Music, ShieldCheck, Check } from 'lucide-react';
+import { AIHealthStatus } from '../types/generation.types';
+import { extractErrorMessage } from '../utils/error';
+import { Sparkles, Upload, Cpu, AlertTriangle, CheckCircle2, ArrowRight, X } from 'lucide-react';
 
 export const CreateWorkspace: React.FC = () => {
-  const [title, setTitle] = useState('');
   const [prompt, setPrompt] = useState('');
-  const [selectedTypes, setSelectedTypes] = useState<string[]>(['image', 'video', 'text']);
+  const [title, setTitle] = useState('');
+  const [inputImagePath, setInputImagePath] = useState<string | null>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
-  const [inputImages, setInputImages] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
-  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  const [aiHealth, setAiHealth] = useState<AIHealthStatus | null>(null);
 
   const navigate = useNavigate();
 
-  const handleTypeToggle = (type: string) => {
-    if (selectedTypes.includes(type)) {
-      setSelectedTypes(selectedTypes.filter((t) => t !== type));
-    } else {
-      setSelectedTypes([...selectedTypes, type]);
-    }
-  };
+  useEffect(() => {
+    const fetchHealth = async () => {
+      try {
+        const health = await generationService.checkAIHealth();
+        setAiHealth(health);
+      } catch (err) {
+        setAiHealth({
+          ollama: false,
+          model: 'llama3.1:8b',
+          status: 'unavailable',
+          message: 'Could not connect to AI service backend.'
+        });
+      }
+    };
+    fetchHealth();
+  }, []);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setUploadingImage(true);
+    setError('');
+
     try {
       const res = await projectService.uploadImage(file);
-      setInputImages((prev) => [...prev, res.url]);
+      setInputImagePath(res.url);
     } catch (err) {
       console.error('Failed image upload:', err);
-      alert('Failed to upload image. Please try a valid JPG or PNG file.');
+      setError('Failed to upload image. Please select a valid JPG or PNG image.');
     } finally {
       setUploadingImage(false);
     }
@@ -41,32 +54,36 @@ export const CreateWorkspace: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title || !prompt) return;
+    if (!prompt.trim()) {
+      setError('Please enter a creative prompt describing what you want to create.');
+      return;
+    }
 
     setSubmitting(true);
-    setMessage('');
+    setError('');
 
     try {
-      // Step 1: Create project entry
+      // Step 1: Create project entry if title provided or auto-generate title
+      const projectTitle = title.trim() || prompt.trim().slice(0, 40) + '...';
       const proj = await projectService.createProject({
-        title,
-        originalPrompt: prompt,
-        inputImages,
+        title: projectTitle,
+        originalPrompt: prompt.trim(),
+        inputImages: inputImagePath ? [inputImagePath] : [],
       });
 
-      // Step 2: Trigger generation pipeline endpoint
-      const genResult = await generationService.triggerGeneration({
+      // Step 2: Dispatch AI Orchestrator generation request
+      const genResult = await generationService.generateContent({
+        prompt: prompt.trim(),
         projectId: proj.id,
-        requestedTypes: selectedTypes,
+        inputImagePath: inputImagePath
       });
 
-      setMessage(genResult.message);
-      setTimeout(() => {
-        navigate(`/results/${proj.id}`);
-      }, 1500);
+      // Step 3: Navigate to results page
+      navigate(`/results/${genResult.id}`);
     } catch (err: any) {
-      console.error('Error during workspace creation:', err);
-      setMessage('Project created successfully in database.');
+      console.error('Error during generation submission:', err);
+      const msg = extractErrorMessage(err, 'Failed to process AI generation. Please check Ollama connection and try again.');
+      setError(msg);
     } finally {
       setSubmitting(false);
     }
@@ -74,88 +91,94 @@ export const CreateWorkspace: React.FC = () => {
 
   return (
     <div className="max-w-4xl mx-auto space-y-8">
-      <div>
-        <h1 className="text-3xl font-extrabold text-white tracking-tight">Create your content</h1>
-        <p className="text-slate-400 text-sm mt-1">
-          PromptFlow AI Workspace - Define prompts & content requirements
-        </p>
+      {/* Top Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-extrabold text-white tracking-tight flex items-center gap-3">
+            PromptFlow <span className="text-indigo-400">AI</span>
+          </h1>
+          <p className="text-slate-400 text-sm mt-1">
+            Multimodal Content Planner & Orchestrator (Llama 3.1 8B)
+          </p>
+        </div>
+
+        {/* AI Health Status Badge */}
+        {aiHealth && (
+          <div
+            className={`px-3.5 py-1.5 rounded-full border text-xs font-semibold flex items-center gap-2 w-fit ${
+              aiHealth.ollama && aiHealth.status === 'available'
+                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+            }`}
+          >
+            <Cpu className="w-3.5 h-3.5" />
+            <span>
+              {aiHealth.ollama && aiHealth.status === 'available'
+                ? `Ollama Active (${aiHealth.model})`
+                : `Ollama Offline (${aiHealth.model})`}
+            </span>
+          </div>
+        )}
       </div>
 
-      {message && (
-        <div className="p-4 rounded-xl bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 text-sm font-medium flex items-center gap-3">
-          <Sparkles className="w-5 h-5 text-indigo-400 shrink-0" />
-          <span>{message}</span>
+      {/* Error Alert */}
+      {error && (
+        <div className="p-4 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs font-medium flex items-start gap-3 shadow-lg">
+          <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <p className="font-semibold text-rose-200">Execution Notice</p>
+            <p className="leading-relaxed">{error}</p>
+          </div>
         </div>
       )}
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        {/* Project Title */}
-        <div className="glass-panel p-6 rounded-2xl border border-slate-800 space-y-4">
-          <label className="block text-sm font-bold text-slate-200">Project Campaign Name</label>
+        {/* Campaign Title Input */}
+        <div className="glass-panel p-6 rounded-2xl border border-slate-800 space-y-3">
+          <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider">
+            Campaign / Project Name (Optional)
+          </label>
           <input
             type="text"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            required
-            placeholder="e.g. Summer Fitness App Launch Campaign"
+            placeholder="e.g. Brew House Coffee Shop Launch"
             className="w-full bg-slate-900/80 border border-slate-800 rounded-xl px-4 py-3 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
           />
         </div>
 
-        {/* Prompt Input */}
-        <div className="glass-panel p-6 rounded-2xl border border-slate-800 space-y-4">
-          <label className="block text-sm font-bold text-slate-200">Prompt & Creative Intent</label>
+        {/* Prompt Input Textarea */}
+        <div className="glass-panel p-6 rounded-2xl border border-slate-800 space-y-3">
+          <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center justify-between">
+            <span>Tell PromptFlow AI what you want to create</span>
+            <span className="text-indigo-400 font-mono text-[11px] font-normal">Llama 3.1 8B Engine</span>
+          </label>
           <textarea
             value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
+            onChange={(e) => {
+              setPrompt(e.target.value);
+              if (error) setError('');
+            }}
             required
-            rows={4}
-            placeholder="Describe what content you need generated (e.g., High quality product showcase video, 3 Instagram post graphics, catchy captions & hashtags)..."
-            className="w-full bg-slate-900/80 border border-slate-800 rounded-xl p-4 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
+            rows={5}
+            placeholder="Describe your request in natural language (e.g. 'I am launching a new clothing brand called UrbanFit', or 'Explain photosynthesis to a 10-year-old', or 'Create a birthday invitation for my sister')..."
+            className="w-full bg-slate-900/80 border border-slate-800 rounded-xl p-4 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors leading-relaxed"
           />
         </div>
 
-        {/* Content Asset Selector */}
+        {/* Reference Image Upload (Optional) */}
         <div className="glass-panel p-6 rounded-2xl border border-slate-800 space-y-4">
-          <label className="block text-sm font-bold text-slate-200">Desired Output Formats</label>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            {[
-              { id: 'image', label: 'Images', icon: ImageIcon },
-              { id: 'video', label: 'Videos', icon: Video },
-              { id: 'text', label: 'Captions & Tags', icon: FileText },
-              { id: 'audio', label: 'Audio / Voice', icon: Music },
-            ].map((item) => {
-              const Icon = item.icon;
-              const isSelected = selectedTypes.includes(item.id);
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => handleTypeToggle(item.id)}
-                  className={`p-3.5 rounded-xl border text-left flex items-center justify-between transition-all ${
-                    isSelected
-                      ? 'bg-indigo-600/15 border-indigo-500/50 text-indigo-300'
-                      : 'bg-slate-900/40 border-slate-800 text-slate-400 hover:border-slate-700'
-                  }`}
-                >
-                  <div className="flex items-center gap-2.5">
-                    <Icon className="w-4 h-4" />
-                    <span className="text-xs font-semibold">{item.label}</span>
-                  </div>
-                  {isSelected && <Check className="w-4 h-4 text-indigo-400" />}
-                </button>
-              );
-            })}
+          <div className="flex items-center justify-between">
+            <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider">
+              Reference Image Context (Optional)
+            </label>
+            <span className="text-[11px] text-slate-500">Supports JPG, PNG</span>
           </div>
-        </div>
 
-        {/* Optional Image Upload */}
-        <div className="glass-panel p-6 rounded-2xl border border-slate-800 space-y-4">
-          <label className="block text-sm font-bold text-slate-200">Reference Images (Optional)</label>
           <div className="flex flex-wrap items-center gap-4">
-            <label className="cursor-pointer inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-semibold text-slate-300 transition-colors">
+            <label className="cursor-pointer inline-flex items-center gap-2.5 px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-semibold text-slate-300 transition-colors">
               <Upload className="w-4 h-4 text-indigo-400" />
-              <span>{uploadingImage ? 'Uploading...' : 'Upload Image'}</span>
+              <span>{uploadingImage ? 'Uploading...' : 'Upload Reference Image'}</span>
               <input
                 type="file"
                 accept="image/*"
@@ -164,22 +187,41 @@ export const CreateWorkspace: React.FC = () => {
                 className="hidden"
               />
             </label>
-            {inputImages.map((img, idx) => (
-              <div key={idx} className="relative group w-12 h-12 rounded-lg overflow-hidden border border-indigo-500/30">
-                <img src={`http://localhost:8000${img}`} alt="uploaded" className="w-full h-full object-cover" />
+
+            {inputImagePath && (
+              <div className="relative group w-16 h-16 rounded-xl overflow-hidden border border-indigo-500/50 shadow-md">
+                <img src={`http://localhost:8000${inputImagePath}`} alt="Reference" className="w-full h-full object-cover" />
+                <button
+                  type="button"
+                  onClick={() => setInputImagePath(null)}
+                  className="absolute top-1 right-1 p-1 rounded-full bg-slate-950/80 text-slate-400 hover:text-rose-400 transition-colors"
+                  title="Remove image"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
               </div>
-            ))}
+            )}
           </div>
         </div>
 
-        {/* Submit */}
+        {/* Generate Button */}
         <button
           type="submit"
           disabled={submitting}
-          className="w-full py-4 px-6 rounded-2xl bg-indigo-600 hover:bg-indigo-500 font-bold text-base text-white flex items-center justify-center gap-2 shadow-xl shadow-indigo-600/30 transition-colors disabled:opacity-50"
+          className="w-full py-4 px-6 rounded-2xl bg-indigo-600 hover:bg-indigo-500 font-bold text-base text-white flex items-center justify-center gap-3 shadow-xl shadow-indigo-600/30 transition-all disabled:opacity-50"
         >
-          <Sparkles className="w-5 h-5 text-indigo-200" />
-          {submitting ? 'Creating Project...' : 'Initialize PromptFlow Generation'}
+          {submitting ? (
+            <>
+              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+              <span>Llama 3.1 8B Analyzing Request & Planning Content...</span>
+            </>
+          ) : (
+            <>
+              <Sparkles className="w-5 h-5 text-indigo-200" />
+              <span>Generate with AI</span>
+              <ArrowRight className="w-5 h-5" />
+            </>
+          )}
         </button>
       </form>
     </div>

@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     # File Storage
     UPLOAD_DIR: str = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../uploads"))
 
+    # Ollama LLM Configuration
+    OLLAMA_BASE_URL: str = "https://txlzwfs4-11434.inc1.devtunnels.ms"
+    OLLAMA_MODEL: str = "llama3.1:8b"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

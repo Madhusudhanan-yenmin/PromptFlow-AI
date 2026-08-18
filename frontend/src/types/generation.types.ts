@@ -1,35 +1,56 @@
-export interface Asset {
-  id: string;
-  projectId: string;
-  userId?: string;
-  type: 'image' | 'video' | 'audio' | 'text' | 'logo';
-  fileName: string;
-  filePath: string;
-  mimeType?: string;
-  status: 'pending' | 'processing' | 'completed' | 'failed';
-  createdAt: string;
-}
-
-export interface Generation {
-  id: string;
-  projectId: string;
+export interface Intent {
   type: string;
-  status: 'pending' | 'processing' | 'completed' | 'failed';
+  goal: string;
+  domain: string;
+  targetAudience?: string;
 }
 
-export interface GenerationCreateRequest {
-  projectId: string;
-  requestedTypes?: string[];
-  options?: Record<string, any>;
+export interface ContentPlanItem {
+  type: 'image' | 'video' | 'logo' | 'caption' | 'hashtags' | 'text' | 'audio' | string;
+  required: boolean;
+  reason: string;
 }
 
-export interface GenerationStatusResponse {
-  generationId: string;
-  projectId: string;
-  status: 'pending' | 'processing' | 'completed' | 'failed';
-  message: string;
-  types: string[];
-  assets: Asset[];
+export interface GeneratedPrompts {
+  image?: string | null;
+  video?: string | null;
+  logo?: string | null;
+}
+
+export interface TextContent {
+  caption?: string | null;
+  hashtags?: string[];
+  bodyText?: string | null;
+}
+
+export interface GenerateRequest {
+  prompt: string;
+  projectId?: string | null;
+  inputImagePath?: string | null;
+}
+
+export interface GenerateResponse {
+  id: string;
+  projectId?: string | null;
+  userId?: string | null;
+  originalPrompt: string;
+  inputImagePath?: string | null;
+  success: boolean;
+  status: 'pending' | 'analyzing' | 'planning' | 'generating_prompts' | 'generating_text' | 'completed' | 'failed';
+  intent: Intent;
+  contentPlan: ContentPlanItem[];
+  generatedPrompts: GeneratedPrompts;
+  textContent: TextContent;
+  model: string;
+  provider: string;
   createdAt: string;
-  updatedAt: string;
+  completedAt: string;
+}
+
+export interface AIHealthStatus {
+  ollama: boolean;
+  model: string;
+  status: 'available' | 'model_missing' | 'unavailable';
+  available_models?: string[];
+  message: string;
 }

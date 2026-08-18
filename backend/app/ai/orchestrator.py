@@ -1,40 +1,61 @@
-from typing import Dict, Any, List
+import logging
+from typing import Dict, Any, Optional, List
+from .ollama_client import OllamaClient
+from .vision_analyzer import VisionAnalyzer
 from .intent_analyzer import IntentAnalyzer
-from .image_generator import ImageGenerator
-from .video_generator import VideoGenerator
+from .content_planner import ContentPlanner
+from .prompt_generator import PromptGenerator
 from .text_generator import TextGenerator
+from app.core.config import settings
+
+logger = logging.getLogger("promptflow.ai.orchestrator")
 
 class AIOrchestrator:
     """
-    Central Coordinator for PromptFlow AI content creation pipeline.
-    Connects Intent Analysis with Image, Video, and Text generation sub-services.
+    Central Controller for PromptFlow AI multi-modal planning pipeline.
+    Coordinates Intent Analyzer -> Content Planner -> Prompt Generator -> Text Generator.
     """
-    def __init__(self):
-        self.intent_analyzer = IntentAnalyzer()
-        self.image_generator = ImageGenerator()
-        self.video_generator = VideoGenerator()
-        self.text_generator = TextGenerator()
+    def __init__(self, ollama_client: Optional[OllamaClient] = None):
+        self.client = ollama_client or OllamaClient()
+        self.vision_analyzer = VisionAnalyzer()
+        self.intent_analyzer = IntentAnalyzer(self.client)
+        self.content_planner = ContentPlanner(self.client)
+        self.prompt_generator = PromptGenerator(self.client)
+        self.text_generator = TextGenerator(self.client)
 
-    async def process_generation_pipeline(self, prompt: str, input_images: List[str] = None) -> Dict[str, Any]:
+    async def process_pipeline(self, prompt: str, input_image_path: Optional[str] = None) -> Dict[str, Any]:
         """
-        Execute the end-to-end multi-modal content generation process.
-        Currently returns pending placeholder responses.
+        Execute end-to-end AI planning pipeline using Llama 3.1 8B via Ollama.
         """
-        # Step 1: Intent Analysis
-        intent_result = await self.intent_analyzer.analyze_intent(prompt, input_images)
-        
-        # Step 2: Parallel or Sequential Dispatch (Placeholder)
-        image_task = await self.image_generator.generate_images(prompt, count=1)
-        video_task = await self.video_generator.generate_video(prompt)
-        text_task = await self.text_generator.generate_copy(prompt)
+        logger.info(f"Starting AI Orchestrator pipeline for prompt: '{prompt}'")
+
+        # Step 1: Vision / Image context extraction (abstraction)
+        image_context = await self.vision_analyzer.extract_image_context(input_image_path) if input_image_path else None
+
+        # Step 2: Intent Analysis
+        logger.info("Executing Intent Analysis...")
+        intent = await self.intent_analyzer.analyze_intent(prompt, image_context)
+
+        # Step 3: Content Planning (LLM dynamically decides output types)
+        logger.info("Executing Dynamic Content Planning...")
+        content_plan = await self.content_planner.generate_plan(prompt, intent)
+
+        # Step 4: Structured Prompt Generation for Media Models (FLUX.2 / Wan 2.2)
+        logger.info("Generating Media Prompts (FLUX.2 / Wan 2.2)...")
+        generated_prompts = await self.prompt_generator.generate_prompts(prompt, intent, content_plan)
+
+        # Step 5: Text Generation (Captions, Hashtags, Copy)
+        logger.info("Generating Text Content...")
+        text_content = await self.text_generator.generate_text(prompt, intent, content_plan)
+
+        logger.info("AI Orchestrator pipeline execution completed successfully.")
 
         return {
-            "status": "pending",
-            "message": "AI generation service will be implemented in the next phase",
-            "intent": intent_result,
-            "tasks": {
-                "images": image_task,
-                "video": video_task,
-                "text": text_task
-            }
+            "status": "completed",
+            "intent": intent,
+            "contentPlan": content_plan,
+            "generatedPrompts": generated_prompts,
+            "textContent": text_content,
+            "model": settings.OLLAMA_MODEL,
+            "provider": "ollama"
         }
